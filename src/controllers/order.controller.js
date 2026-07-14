@@ -14,48 +14,29 @@ const getOrderHistory = async (req, res) => {
 
     console.log(`[Order Controller] Fetching history for User #${userId}`);
 
-    // Query 1: Get all orders for this user
-    const ordersResult = await db.query(
-        'SELECT * FROM orders WHERE user_id = $1 ORDER BY order_date DESC',
-        [userId]
-    );
-    const orders = ordersResult.rows;
-
-    // // Get full order details for each order (N+1 query pattern)
-    // For each order, we fetch the items, then for each item, the menu item details.
-    const fullOrders = [];
-    
-    for (const order of orders) {
-        // Query 1+N: Get items for this order
-        const itemsResult = await db.query(
-            'SELECT * FROM order_items WHERE order_id = $1',
-            [order.id]
-        );
-        const items = itemsResult.rows;
-        
-        const detailedItems = [];
-        for (const item of items) {
-            // Query 1+N+M: Get menu details for this item
-            const menuResult = await db.query(
-                'SELECT * FROM menu_items WHERE id = $1',
-                [item.menu_item_id]
-            );
-            detailedItems.push({
-                ...item,
-                menu_item: menuResult.rows[0]
-            });
-        }
-        
-        fullOrders.push({
-            ...order,
-            items: detailedItems
-        });
-    }
+    const result = await db.query(`
+        SELECT
+            o.id, o.total_amount, o.delivery_fee, o.status, o.order_date,
+            json_agg(
+                json_build_object(
+                    'itemId', oi.menu_item_id,
+                    'name',   mi.name,
+                    'qty',    oi.quantity,
+                    'price',  oi.unit_price
+                )
+            ) AS items
+        FROM orders o
+        JOIN order_items oi ON oi.order_id = o.id
+        JOIN menu_items mi  ON mi.id = oi.menu_item_id
+        WHERE o.user_id = $1
+        GROUP BY o.id
+        ORDER BY o.order_date DESC
+    `, [userId]);
 
     res.json({
         user_id: userId,
-        total_orders: orders.length,
-        orders: fullOrders
+        total_orders: result.rows.length,
+        orders: result.rows
     });
 };
 
